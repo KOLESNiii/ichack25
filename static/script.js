@@ -13,15 +13,11 @@ async function startWebcam() {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         videoElement.srcObject = stream;
 
-        const audioTrack = stream.getAudioTracks()[0];
-        if (audioTrack) {
-            audioTrack.enabled = false;  // Disable the audio track
-        }
+        videoElement.muted = true; // Prevent audio playback from video element
+        videoElement.play(); // Start playing video without audio
 
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
         mediaRecorder.stop()
-
-
 
         mediaRecorder.ondataavailable = (event) => {
             if (event.data.size > 0) {
@@ -69,14 +65,19 @@ function stopRecording() {
 }
 
 async function getNextQuestion() {
-    const response = await fetch('http://127.0.0.1:5000/api/get-prompt');
+    const response = await fetch('http://127.0.0.1:5000/api/get-next-question');
     if (!response.ok) {
         throw new Error('Error status: ${response.status}')
     }
     const data = await response.json();
+    const id = data.id;
     const prompt = data.prompt;
     const prep = data.prepTime;
     const time = data.answerTime;
+    if (!prompt) {
+        alert("No questions available.")
+    }
+    localStorage.setItem('activeQuestion', JSON.stringify({ id: id, text: prompt, prep: prep, time: time }));
     console.log(prompt);
     console.log(prep);
     console.log(time);
@@ -111,12 +112,12 @@ questionButton.addEventListener('click', async () => {
     questionButton.disabled = true;
     recordedChunks = [];  // Clear previous chunks
     console.log("Button pressed");
-    const {prompt, prep, time} = await getNextQuestion();
+    const {id, prompt, prep, time} = await getNextQuestion();
     questionText.innerText = prompt;
+    localStorage.setItem('activeQuestion', JSON.stringify({ id: id, text: prompt }));
     updateCounter(recordTimer, time);
     startCountdown(prepTimer, prep, () => onPrepEnd(time));
 });
-
 
 async function processVideo(blob) {
     // Create a FormData object to send the Blob to the Flask backend
@@ -147,3 +148,13 @@ async function processVideo(blob) {
         console.error('Error during video upload:', error);
     }
 }
+
+const urlParams = new URLSearchParams(window.location.search);
+
+const autoClick = urlParams.get('autoClick');
+console.log(autoClick);
+
+if (autoClick === 'true') {
+document.getElementById('questionButton').click();
+
+}  

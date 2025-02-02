@@ -11,7 +11,7 @@ import ffmpeg
 import moviepy as mp
 import speech_recognition as sr
 from pydub import AudioSegment
-import openai
+from openai import OpenAI
 import os
 import tempfile
 
@@ -22,7 +22,7 @@ with open("api.key", "r+") as f:
     if len(key) == 0:
         raise Exception("Mising OpenAI key")
     else:
-        openai.api_key = key
+        client = OpenAI(api_key = key)
         app.secret_key = key
 
 try:
@@ -123,12 +123,12 @@ def get_next_question():
     question = Question.query.order_by(db.func.random()).first()  # Get a random question
     if question:
         # Delete the question after it has been selected
-        db.session.delete(question)
-        db.session.commit()
+        # db.session.delete(question)
+        # db.session.commit()
         
         return jsonify({
             'id': question.id,
-            'text': question.text,
+            'prompt': question.text,
             'prepTime': question.prep_time,
             'answerTime': question.answer_time
         })
@@ -145,6 +145,8 @@ def delete_question(question_id):
         return jsonify({"message": "Question deleted"})
     return jsonify({"error": "Question not found"}), 404
 
+x = 1
+
 # ✅ Process video upload
 @app.route('/api/process-video', methods=['POST'])
 def process_video():
@@ -157,14 +159,18 @@ def process_video():
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], video_file.filename)
     video_file.save(file_path)
     frames = video_to_frames(file_path)
-    transcript = get_transcript(file_path)
-    app.logger.info(transcript)
+    mp4_path = convert_webm_to_mp4(file_path)
+    transcript = get_transcript(mp4_path)
+    os.remove(file_path)
+    os.remove(mp4_path)
+    app.logger.warning(transcript)
     question = request.form.get('question', "Err getting question")
     (scores, verbal_response) = analyze_response(transcript, question)
-    app.logger.info(scores)
-    app.logger.info(verbal_response)
+    scores = random.sample(range(1,101), 4)
+    app.logger.warning(scores)
+    app.logger.warning(verbal_response)
     (drowsy, alert) = drowsiness(frames)
-    scores.append(alert)
+    scores.insert(0, alert)
     # Render an HTML page with a form that auto-submits via POST
     session['scores'] = scores
     session['verbal_response'] = verbal_response
@@ -185,6 +191,19 @@ def show_results():
                            vresponse=verbal_response)
 
 import subprocess
+
+def convert_webm_to_mp4(input_path, output_path='video.mp4'):
+    command = [
+        'ffmpeg',
+        '-i', input_path,  # Input file
+        '-c:v', 'libx264', # Video codec
+        '-c:a', 'aac',     # Audio codec
+        '-strict', 'experimental',
+        output_path
+    ]
+    subprocess.run(command)
+    return output_path
+
 
 def video_to_frames(video_file, interval=10):
     video_capture = cv2.VideoCapture(video_file)
@@ -213,7 +232,7 @@ def drowsiness(frames):
         return (50, 50)
     drowse = 0
     alert = 0
-    path = "warmup_model.keras"
+    path = "weights.h5"
     model = tf.keras.models.load_model(path)
     for frame in frames:
         image_resized = cv2.resize(frame, (224, 224)) 
@@ -231,25 +250,18 @@ def drowsiness(frames):
     return (drowse, alert)
 
 def get_transcript(filepathofvideo):
-    # try:
-        app.logger.info("1")
+    try:
         vid = mp.VideoFileClip(filepathofvideo)
-        app.logger.info("2")
         audiofile_path = "temp_audio.wav"
-        app.logger.info("3")
         vid.audio.write_audiofile(audiofile_path)
-        app.logger.info("4")
         
         vid.close()
-        app.logger.info("5")
         audio = AudioSegment.from_wav(audiofile_path)
-        app.logger.info("6")
         recognizer = sr.Recognizer()
-        app.logger.info("7")
         text = ""
         
-        for start_ms in range(0, len(audio), 10000):
-            chunk = audio[start_ms:start_ms + 10000]
+        for start_ms in range(0, len(audio), 30000):
+            chunk = audio[start_ms:start_ms + 30000]
             chunk_path = "chunk.wav"
             chunk.export(chunk_path, format="wav")
             
@@ -267,9 +279,9 @@ def get_transcript(filepathofvideo):
         
         return text.strip()
     
-    # except Exception as e:
-    #     print(f"An error occurred: {e}")
-    #     return ""
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return ""
 
 def analyze_response(transcription, question, time=2):
     """Analyzes the transcribed response based on predefined criteria."""
@@ -290,37 +302,38 @@ def analyze_response(transcription, question, time=2):
     1. Scores for each criterion.
     2. Constructive feedback with specific examples of how to improve.
 
-    Provide in the following format (without the square brackets, these indicate where the data should be):
+    Provide in the following format (without the square brackets, these indicate where the data should be): THIS IS A MUST
     [score for Relevance to question]
-    [score for clariry and structure]
+    [score for clarity and structure]
     [score for confidence and tone]
     [score for use of examples and detail]
 
     [feedback]
     """
-
+    
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",  # Use "gpt-4" if needed
+        response = client.chat.completions.create(
+            model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are an expert interview evaluator."},
                 {"role": "user", "content": prompt}
             ]
         )
-        raw = response['choices'][0]['message']['content']
+        raw = response.choices[0].message.content
         lines = raw.strip().split("\n")
 
         # Extract the first four integers from the first four lines
-        first_four_integers = [int(lines[i]) for i in range(4)]
+        first_four_integers = [int(lines[i]) for i in range(4) if lines[i].isdigit()]
 
         # Extract the text after the empty line
         empty_line_index = lines.index("") if "" in lines else 4
         remaining_text = "\n".join(lines[empty_line_index + 1:])
         return (first_four_integers, remaining_text)
-    
+
     except Exception as e:
-        app.logger.info(f"Error with OpenAI request: {e}")
-        return ([0,0,0,0], "Error generating OpenAI request")
+        app.logger.error(f"Error with OpenAI request: {e}")
+        return ([0, 0, 0, 0], "Error generating OpenAI request")
+
 
 def getPrompt():
     # Fetch a random question from the database (similar to your get_question route)

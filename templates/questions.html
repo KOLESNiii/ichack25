@@ -58,7 +58,7 @@
                         <div class="col-2 text-end">
                             <div class="btn-group">
                                 <button class="btn btn-danger btn-sm" onclick="deleteQuestion(${q.id})">Delete</button>
-                                <button class="btn btn-success btn-sm" onclick="chooseQuestion(${q.id}, '${q.text}')">Choose Question</button>
+                                <button class="btn btn-success btn-sm" onclick="chooseQuestion(${q.id}, '${q.text}', ${q.prepTime}, ${q.answerTime})">Choose Question</button>
                             </div>
                         </div>
                     </div>
@@ -92,12 +92,17 @@
         }
 
         // Choose a question and set it as the active one
-        function chooseQuestion(id, questionText) {
-            // Save the selected question to localStorage
-            localStorage.setItem('activeQuestion', JSON.stringify({ id, text: questionText }));
+        function chooseQuestion(id, questionText, prepTime, answerTime) {
+            // Save the selected question to localStorage with all needed info
+            localStorage.setItem(
+                'activeQuestion',
+                JSON.stringify({ id, text: questionText, prep: prepTime, time: answerTime })
+            );
             // Redirect to the homepage
-            window.location.href = '/';
+            window.location.href = '/?autoClick=true';
         }
+
+
 
         // Load the active question on the homepage (index.html or wherever needed)
         window.addEventListener('load', () => {
